@@ -1,135 +1,66 @@
-use wgpu::*;
-use winit::{
-    event::{Event, VirtualKeyCode},
-    event_loop::{ControlFlow, EventLoop},
-    window::WindowBuilder,
-};
-use pollster::block_on;
+use std::net::{TcpListener, TcpStream};
+use std::io::{Read, Write};
+use serde_json::{json, Value};
 
-const VERTICES: &[f32] = &[
-    -0.0868241, 0.492284, 0.0, 1.0,
-    0.414214, 0.141237, 0.0, 1.0,
-    0.414214, -0.141237, 0.0, 1.0,
-];
+// Define a struct to hold the rendering results
+struct RenderingResults {
+    width: u32,
+    height: u32,
+    color: String,
+}
 
-const INDICES: &[u16] = &[0, 1, 2];
+// Define a function to render an element and return the results
+fn render_element(element: &str) -> RenderingResults {
+    // Create a new rendering engine instance
+    let mut engine = RenderingEngine::new();
+
+    // Render the element
+    engine.render(element);
+
+    // Get the rendering results
+    let results = engine.get_results();
+
+    // Return the rendering results
+    RenderingResults {
+        width: results.width,
+        height: results.height,
+        color: results.color,
+    }
+}
+
+// Define a function to handle incoming requests
+fn handle_request(stream: TcpStream) {
+    // Read the request data from the stream
+    let mut data = String::new();
+    stream.read_to_string(&mut data).unwrap();
+
+    // Parse the request data as JSON
+    let request: Value = serde_json::from_str(&data).unwrap();
+
+    // Get the element to render from the request data
+    let element = request["element"].as_str().unwrap();
+
+    // Render the element and get the results
+    let results = render_element(element);
+
+    // Create a new JSON object to hold the response data
+    let response = json!({
+        "width": results.width,
+        "height": results.height,
+        "color": results.color,
+    });
+
+    // Write the response data to the stream
+    stream.write_all(response.to_string().as_bytes()).unwrap();
+}
 
 fn main() {
-    block_on(async {
-        let instance = Instance::new(InstanceDescriptor {
-            backends: Backends::all(),
-            ..Default::default()
-        });
+    // Create a new TCP listener
+    let listener = TcpListener::bind("127.0.0.1:3000").unwrap();
 
-        let surface = unsafe { instance.create_surface(&winit::window::Window::new(&winit::window::WindowDescriptor::default())) };
-
-        let adapter = instance
-            .request_adapter(
-                &RequestAdapterOptions {
-                    power_preference: PowerPreference::default(),
-                    force_fallback_adapter: false,
-                    compatible_surface: Some(&surface),
-                },
-            )
-            .await
-            .unwrap();
-
-        let (device, queue) = adapter
-            .request_device(
-                &DeviceDescriptor {
-                    features: Features::empty(),
-                    limits: Limits::default(),
-                    label: None,
-                },
-                None,
-            )
-            .await
-            .unwrap();
-
-        let config = SurfaceConfiguration {
-            usage: TextureUsages::RENDER_ATTACHMENT,
-            format: surface.get_preferred_format(&adapter).unwrap(),
-            width: 800,
-            height: 600,
-            present_mode: PresentMode::Fifo,
-        };
-
-        surface.configure(&device, &config);
-
-        let vertex_buffer = device.create_buffer_init(&BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(VERTICES),
-            usage: BufferUsages::VERTEX,
-        });
-
-        let index_buffer = device.create_buffer_init(&BufferInitDescriptor {
-            label: Some("Index Buffer"),
-            contents: bytemuck::cast_slice(INDICES),
-            usage: BufferUsages::INDEX,
-        });
-
-        let shader = device.create_shader_module(ShaderModuleDescriptor {
-            label: Some("Shader"),
-            source: ShaderSource::Wgsl(Cow::Borrowed(
-                r#"
-                    struct VertexInput {
-                        [[location(0)]] position: vec4<f32>,
-                    }
-
-                    struct VertexOutput {
-                        [[builtin(position)]] position: vec4<f32>,
-                    }
-
-                    [[stage(vertex)]]
-                    fn vs_main(input: VertexInput) -> VertexOutput {
-                        var output: VertexOutput;
-                        output.position = input.position;
-                        return output;
-                    }
-
-                    [[stage(fragment)]]
-                    fn fs_main() -> [[location(0)]] vec4<f32> {
-                        return vec4<f32>(1.0, 0.0, 0.0, 1.0);
-                    }
-                "#,
-            )),
-        });
-
-        let render_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
-            label: Some("Render Pipeline Layout"),
-            bind_group_layouts: &[],
-            push_constant_ranges: &[],
-        });
-
-        let render_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
-            label: Some("Render Pipeline"),
-            layout: Some(&render_pipeline_layout),
-            vertex: ProgrammableStageDescriptor {
-                module: &shader,
-                entry_point: "vs_main",
-            },
-            fragment: Some(ProgrammableStageDescriptor {
-                module: &shader,
-                entry_point: "fs_main",
-            }),
-            rasterization_state: Some(RasterizationStateDescriptor {
-                front_face: FrontFace::Cw,
-                cull_mode: None,
-                ..Default::default()
-            }),
-            primitive_topology: PrimitiveTopology::TriangleList,
-            color_states: &[ColorStateDescriptor {
-                format: config.format,
-                color_blend: BlendDescriptor {
-                    src_factor: BlendFactor::SrcAlpha,
-                    dst_factor: BlendFactor::OneMinusSrcAlpha,
-                    operation: BlendOperation::Add,
-                },
-                alpha_blend: BlendDescriptor {
-                    src_factor: BlendFactor::One,
-                    dst_factor: BlendFactor::Zero,
-                    operation: BlendOperation::Add,
-                },
-                write_mask: ColorWriteMask::ALL,
-            }],
-             
+    // Listen for incoming requests
+    for stream in listener.incoming() {
+        // Handle the incoming request
+        handle_request(stream.unwrap());
+    }
+}
